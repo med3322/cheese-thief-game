@@ -12,6 +12,7 @@ let discussionRemaining = 0;
 let roosterPlayed = false;
 let muted = false;
 let voteIndex = 0;
+let votes = {}; // เก็บคะแนนโหวต
 
 // ---------- AUDIO ----------
 const bgMusic = document.getElementById('bgMusic');
@@ -60,6 +61,24 @@ function playClick() {
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] } return a }
 function formatTime(sec){ if(sec<0) sec=0; const m=Math.floor(sec/60); const s=sec%60; return `${m}:${String(s).padStart(2,'0')}` }
 function setVolume(v){ bgMusic.volume = nightMusic.volume = rooster.volume = menuClick.volume = winSound.volume = loseSound.volume = v; }
+
+// ---------- CONFIRM MODAL ----------
+function showConfirm(msg, onYes) {
+  const modal = document.createElement("div");
+  modal.className = "confirm-modal";
+  modal.innerHTML = `
+    <div class="confirm-box">
+      <p>${msg}</p>
+      <div class="confirm-actions">
+        <button class="btn danger" id="cNo">❌ ยกเลิก</button>
+        <button class="btn secondary" id="cYes">✅ ยืนยัน</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.getElementById("cYes").onclick = () => { onYes(); modal.remove(); };
+  document.getElementById("cNo").onclick = () => modal.remove();
+}
+
 
 // ---------- RENDER ----------
 function render(){
@@ -169,11 +188,21 @@ function render(){
       break;
 
     case 'result':
-      app.innerHTML=`${backBtn}${muteBtn}
-        <h2>${window._gameResultText||'ผลลัพธ์'}</h2>
-        <div><button class="btn" onclick="playClick();restart()">🔁 เริ่มใหม่</button></div>`;
+      app.innerHTML=`${muteBtn}
+        <h2>${window._gameResultText}</h2>
+        <div class="result-cards">
+          ${players.map(p=>`
+            <div class="result-card">
+              <img src="${assignedRoles[p]}" alt="role">
+              <div>🎭 ${p}</div>
+            </div>`).join('')}
+        </div>
+        <div style="margin-top:20px">
+          <button class="btn" onclick="restart()">🔁 เริ่มใหม่</button>
+          <button class="btn secondary" onclick="goMenu()">🏠 หน้าหลัก</button>
+        </div>`;
       if(!muted){
-        if(window._gameResultText && window._gameResultText.includes('ถูกต้อง')){
+        if(window._gameResultText.includes('ถูกต้อง')){
           winSound.currentTime=0; winSound.play().catch(()=>{});
         } else {
           loseSound.currentTime=0; loseSound.play().catch(()=>{});
@@ -184,7 +213,7 @@ function render(){
 }
 
 // ---------- GAME LOGIC ----------
-function goMenu(){ currentPage='menu'; render(); }
+function goMenu(){ cheeseStolen=false; roosterPlayed=false; currentPage='menu'; render(); }
 function goSettings(){ currentPage='settings'; render(); }
 function goSetup(){ currentPage='setup'; render(); }
 function chooseCount(n){ players = new Array(n).fill(''); currentPage='nameInput'; render(); }
@@ -224,34 +253,49 @@ function nextRole(){ currentIndex++; currentPage = currentIndex < players.length
 
 function onCupClick(el){ el.classList.add('lifted'); setTimeout(()=>el.classList.remove('lifted'),3000); }
 function onCheeseClick(){ cheeseStolen=true; render(); }
-function goMorning(){ currentPage='morning'; render(); }
 
+function goMorning(){ showConfirm("🌅 เช้าแล้ว?", ()=>{ currentPage='morning'; render(); }); }
 function startDiscussion(){
-  discussionRemaining=300;
-  currentPage='discussion';
-  render();
-  if(discussionTimer) clearInterval(discussionTimer);
-  discussionTimer = setInterval(()=>{
-    discussionRemaining--;
-    const el=document.getElementById('countdown');
-    if(el) el.innerText=formatTime(discussionRemaining);
-    if(discussionRemaining<=0){ clearInterval(discussionTimer); goVote(); }
-  },1000);
+  showConfirm("เริ่มสนทนา?", ()=>{
+    discussionRemaining=300;
+    currentPage='discussion'; render();
+    if(discussionTimer) clearInterval(discussionTimer);
+    discussionTimer = setInterval(()=>{
+      discussionRemaining--;
+      const el=document.getElementById('countdown');
+      if(el) el.innerText=formatTime(discussionRemaining);
+      if(discussionRemaining<=0){ clearInterval(discussionTimer); goVote(); }
+    },1000);
+  });
 }
-
-function goVote(){ if(discussionTimer) clearInterval(discussionTimer); voteIndex=0; currentPage='vote'; render(); }
+function goVote(){ showConfirm("เริ่มโหวต?", ()=>{ if(discussionTimer) clearInterval(discussionTimer); votes={}; currentPage='vote'; voteIndex=0; render(); }); }
 
 function castVote(name){
-  const thief='thief.PNG';
-  window._gameResultText = assignedRoles[name]===thief 
-      ? '✅ ถูกต้อง! จับขโมยได้' 
-      : '❌ ผิด! หนูขโมยชีสชนะ';
-  voteIndex++;
-  currentPage = voteIndex < players.length ? 'vote' : 'result';
-  render();
+  showConfirm(`คุณต้องการโหวต ${name}?`, ()=>{
+    votes[name] = (votes[name]||0)+1;
+    voteIndex++;
+    if(voteIndex < players.length){ currentPage='vote'; render(); }
+    else finishVote();
+  });
 }
 
-function restart(){ cheeseStolen=false; roosterPlayed=false; currentPage='setup'; render(); }
+function finishVote(){
+  let maxVote = -1, eliminated=null;
+  for(const [p,c] of Object.entries(votes)){
+    if(c>maxVote){ maxVote=c; eliminated=p; }
+  }
+  const role = assignedRoles[eliminated];
+  if(role==='thief.PNG'){
+    window._gameResultText = "✅ ถูกต้อง! จับหนูขโมยชีสได้ 🧀";
+  } else if(role==='scapegoat.PNG'){
+    window._gameResultText = "❌ ผิด! หนูรับเคราะห์ชนะ 🐭";
+  } else {
+    window._gameResultText = "❌ ผิด! หนูขโมยชีสชนะ 🧀";
+  }
+  currentPage='result'; render();
+}
+
+function restart(){ showConfirm("เริ่มใหม่?", ()=>{ cheeseStolen=false; roosterPlayed=false; currentPage='setup'; render(); }); }
 function closeWindow(){ alert("ปิดแท็บเพื่อออกเกม"); }
 
 // ---------- INIT ----------
